@@ -8,7 +8,7 @@ close all
 %% Load Data 
 
 % simulation data set
-data  = load("l5a_p_sg_ct2.mat");
+data  = load("u5a_p_sg_ct1.mat");
 
 % vehicle parameters
 vp = data.vp;
@@ -42,48 +42,52 @@ F_grade = extractfield(sim, 'F_grade');
 %% Measurements
 
 % measurement variance
-sigma_v = 0.1;
+sigma_v = 0.01;
+
+% accelerometer bias
+b_a = 0.02;
 
 % measurement
-y = accel + sigma_v*randn(1,length(pro.t_sim));
+y = b_a + accel + sigma_v*randn(1,length(pro.t_sim));
 
 %% Nonlinear Recursive Least Squares
 
 % intialize
-x_init = 1/7000;
-P_init = 1e-8;
+x_init = [1/7000; 0.001];
+P_init = [1e-8, 0;
+          0, 0.01];
 
 x = x_init;
 P = P_init;
 
 % measurement 
-R = 1e-5;
+R = 0.1;
 
 for k = 1:length(pro.t_sim)
     
     % linearized observation matrix
-    H = pro.scale_factor*T_eng(k) - pro.B_eff*vel(k)...
+    H = [pro.scale_factor*T_eng(k) - pro.B_eff*vel(k)...
         - vp.u_rr*pro.g*cos(pro.grade(k)) - pro.g*sin(pro.grade(k)) ...
-        - 0.5*pro.p*vp.cd*vp.front_area*vel(k)^2;
+        - 0.5*pro.p*vp.cd*vp.front_area*vel(k)^2, 1];
 
     % nonlinear observation matrix
-    h = pro.scale_factor*T_eng(k) - pro.B_eff*vel(k)...
-        - ((1/x) - pro.M_i)*vp.u_rr*pro.g*cos(pro.grade(k)) ...
-        - ((1/x) - pro.M_i)*pro.g*sin(pro.grade(k)) ...
-        - 0.5*pro.p*vp.cd*vp.front_area*vel(k)^2;
+    h = [pro.scale_factor*T_eng(k) - pro.B_eff*vel(k)...
+        - ((1/x(1)) - pro.M_i)*vp.u_rr*pro.g*cos(pro.grade(k)) ...
+        - ((1/x(1)) - pro.M_i)*pro.g*sin(pro.grade(k)) ...
+        - 0.5*pro.p*vp.cd*vp.front_area*vel(k)^2, 1];
     
-    % measurement noise
-    if abs(y(k)) > 0.05
-        R = 1e-5;
-    elseif abs(y(k)) < 0.05
-        R = 1;
-    end
+%     % measurement noise
+%     if abs(y(k)) > 0.05
+%         R = 1e-5;
+%     elseif abs(y(k)) < 0.05
+%         R = 1;
+%     end
     
     % gain
     L = P*H'/(H*P*H' + R);
 
     % covariance
-    P = (eye(1) - L*H)*P;
+    P = (eye(2) - L*H)*P;
 
     % state estimate
     x = x + L*(y(k) - h*x);
@@ -91,16 +95,16 @@ for k = 1:length(pro.t_sim)
     % siphon variables
 
     % effective mass estimate
-    M_eff_est(k) = (1/x);
+    M_eff_est(k) = (1/x(1));
     % vehicle mass estimate
-    M_veh_est(k) = (1/x) - pro.M_i;
+    M_veh_est(k) = (1/x(1)) - pro.M_i;
+    % accelerometer bias estimate
+    b_a_est(k) = x(2);
 
     % kalman gain
-    gain(k) = L;
+    gain(:,:,k) = L;
     % covariance matrix
-    covar(k) = P;
-    % measurement variance
-    meas_var(k) = R;
+    covar(:,:,k) = P;
 end
 
 %% Interface
@@ -110,7 +114,7 @@ veh_info = 'true';
 % display procedure info
 pro_info = 'true';
 % display simulation info
-sim_info = 'false';
+sim_info = 'true';
 % display estimator info
 est_info = 'true';
 
@@ -261,10 +265,23 @@ if strcmp(est_info, 'true') == 1
     hold off
     title('Vehicle Mass Estimate')
     xlabel('Time [s]')
-    ylabel('Kg')
-    ylim([(vp.m_veh - 0.05*vp.m_veh),(vp.m_veh + 0.05*vp.m_veh)])
+    ylabel('Mass [Kg]')
+    ylim([(vp.m_veh - 0.03*vp.m_veh),(vp.m_veh + 0.03*vp.m_veh)])
     grid
-    legend('Truth', 'NRLS')
+    legend('Truth', 'NRLS', Location='best')
+    
+    % estimated bias plot
+    figure
+    set(gcf, 'Color', 'w')
+    hold on
+    plot(pro.t_sim, b_a*ones(1,length(pro.t_sim)), '--', LineWidth = 1.5)
+    plot(pro.t_sim, b_a_est, LineWidth = 1.5)
+    hold off
+    title('Accelerometer Bias Estimate')
+    xlabel('Time [s]')
+    ylabel('Bias [m/s]')
+    grid
+    legend('Truth', 'NRLS', Location='best')
 
 elseif strcmp(est_info, 'false') == 1
 end
